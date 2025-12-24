@@ -2,7 +2,7 @@
 extends Node2D
 class_name Enemy
 
-var enemy_data: EnemyData.Enemy
+var enemy_data: EnemyData.EnemyInstance
 var grid_config: GridConfig
 var pathfinder: Pathfinder
 var game_manager: GameManager
@@ -23,7 +23,7 @@ var circle_radius: float = 12.0
 var color: Color = Color.WHITE
 
 func _init(unit_type: EnemyData.UnitType, grid_pos: Vector2i, grid: GridConfig, pathfinder_ref: Pathfinder, game_mgr: GameManager):
-	enemy_data = EnemyData.Enemy.new(unit_type, grid_pos)
+	enemy_data = EnemyData.EnemyInstance.new(unit_type, grid_pos)
 	grid_config = grid
 	pathfinder = pathfinder_ref
 	game_manager = game_mgr

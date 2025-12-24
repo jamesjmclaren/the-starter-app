@@ -3,7 +3,7 @@ class_name EnemyData
 
 enum UnitType { WALKER, FLYER }
 
-class Enemy:
+class EnemyInstance:
 	var type: UnitType
 	var health: int
 	var max_health: int

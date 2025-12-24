@@ -6,6 +6,8 @@ var game_manager: GameManager
 var grid_config: GridConfig
 var camera: Camera2D
 var pathfinder: Pathfinder
+var ui_manager: UIManager
+var start_screen: StartScreen
 
 # Game entities
 var towers: Array[Tower] = []
@@ -17,12 +19,17 @@ var current_wave_units: Array[EnemyData.UnitType] = []
 var spawn_timer: float = 0.0
 var spawn_delay: float = 0.5
 var wave_started: bool = false
+var wave_in_progress: bool = false
 
 # Camera settings
 var camera_speed: float = 300.0  # pixels per second
 var zoom_min: float = 0.5
 var zoom_max: float = 3.0
 var zoom_speed: float = 0.1
+
+# Game states
+enum GameState { MENU, PLAYING, WAVE_COMPLETE, GAME_OVER }
+var current_state: GameState = GameState.MENU
 
 func _ready():
 	# Initialize managers
@@ -41,17 +48,25 @@ func _ready():
 	var grid_renderer = GridRenderer.new()
 	add_child(grid_renderer)
 
+	# Add UI Manager
+	ui_manager = UIManager.new(game_manager, self)
+	add_child(ui_manager)
+
+	# Add start screen
+	start_screen = StartScreen.new()
+	add_child(start_screen)
+	start_screen.start_pressed.connect(_on_start_screen_pressed)
+
 	# Connect game manager signals
 	game_manager.gold_changed.connect(_on_gold_changed)
 	game_manager.wave_changed.connect(_on_wave_changed)
 	game_manager.enemy_escaped.connect(_on_enemy_escaped)
 	game_manager.game_over.connect(_on_game_over)
 
-	print("Game initialized - Grid: 100x20")
-	print("Use Arrow Keys to move camera")
-	print("Use Mouse Wheel to zoom")
-	print("Click to place towers (costs 100 gold)")
-	print("Press SPACE to start game")
+	print("🎮 Tower Defense Game Initialized")
+	print("Grid: 100x20 | Defeat at: 50 enemies escape")
+	print("Starting game...")
+	current_state = GameState.MENU
 
 func _process(delta):
 	if camera == null:
@@ -85,11 +100,14 @@ func _process(delta):
 	camera.global_position.y = clamp(camera.global_position.y, min_y, max_y)
 
 	# Game loop
-	if game_manager.is_running:
-		update_spawning(delta)
+	match current_state:
+		GameState.PLAYING:
+			update_spawning(delta)
+		GameState.WAVE_COMPLETE:
+			check_wave_complete()
 
 func _input(event: InputEvent):
-	# Handle zoom with mouse wheel
+	# Always allow camera controls
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			camera.zoom += Vector2(zoom_speed, zoom_speed)
@@ -100,14 +118,28 @@ func _input(event: InputEvent):
 			camera.zoom = camera.zoom.clamp(Vector2(zoom_min, zoom_min), Vector2(zoom_max, zoom_max))
 			get_tree().root.set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			place_tower_at_mouse()
+			if current_state == GameState.PLAYING:
+				place_tower_at_mouse()
 			get_tree().root.set_input_as_handled()
 
-	# Start game
+	# Handle SPACE based on game state
 	if event is InputEventKey and event.pressed and event.keycode == KEY_SPACE:
-		if not game_manager.is_running:
-			game_manager.start_game()
-			get_tree().root.set_input_as_handled()
+		match current_state:
+			GameState.MENU:
+				pass  # Handled by start_screen
+			GameState.PLAYING:
+				if not wave_in_progress:
+					game_manager.next_wave()
+					get_tree().root.set_input_as_handled()
+			GameState.WAVE_COMPLETE:
+				game_manager.next_wave()
+				current_state = GameState.PLAYING
+				ui_manager.hide_wave_complete()
+				get_tree().root.set_input_as_handled()
+			GameState.GAME_OVER:
+				# Restart game
+				get_tree().reload_current_scene()
+				get_tree().root.set_input_as_handled()
 
 func place_tower_at_mouse():
 	if not game_manager.is_running:
@@ -144,7 +176,7 @@ func place_tower_at_mouse():
 	print("Tower placed at grid (%d, %d)" % [grid_pos.x, grid_pos.y])
 
 func update_spawning(delta):
-	if not wave_started:
+	if not wave_in_progress:
 		return
 
 	spawn_timer -= delta
@@ -157,19 +189,17 @@ func update_spawning(delta):
 		spawned_enemies += 1
 		spawn_timer = spawn_delay
 
-		print("Spawned enemy %d/%d" % [spawned_enemies, current_wave_units.size()])
-
-		# If all enemies spawned, wait for them to finish
+		# If all enemies spawned, check for completion
 		if spawned_enemies >= current_wave_units.size():
-			check_wave_complete()
+			wave_in_progress = false
 
 func check_wave_complete():
-	# Check if all enemies are gone or reached end
+	# Check if all enemies are gone
 	enemies = enemies.filter(func(e): return not e.is_queued_for_deletion())
-	if enemies.is_empty() and spawned_enemies >= current_wave_units.size():
-		print("Wave complete!")
-		wave_started = false
-		# Wait for player to start next wave
+	if enemies.is_empty() and not wave_in_progress:
+		print("✨ Wave complete! Press SPACE for next wave")
+		current_state = GameState.WAVE_COMPLETE
+		ui_manager.show_wave_complete()
 
 func center_camera():
 	var grid_center_x = (grid_config.GRID_WIDTH * grid_config.CELL_SIZE) / 2
@@ -177,18 +207,24 @@ func center_camera():
 	camera.global_position = Vector2(grid_center_x, grid_center_y)
 
 ## Signal callbacks
+func _on_start_screen_pressed():
+	current_state = GameState.PLAYING
+	game_manager.start_game()
+
 func _on_gold_changed(new_gold: int):
-	print("💰 Gold: %d" % new_gold)
+	pass  # UI Manager handles display
 
 func _on_wave_changed(wave_number: int):
-	print("🌊 Wave %d started" % wave_number)
 	current_wave_units = game_manager.get_current_wave_units()
 	spawned_enemies = 0
-	wave_started = true
+	wave_in_progress = true
 	spawn_timer = spawn_delay
+	print("🌊 Wave %d started! (%d enemies)" % [wave_number, current_wave_units.size()])
 
-func _on_enemy_escaped(count: int = -1):
-	print("⚠️ Enemy escaped! Total escaped: %d/50" % game_manager.escaped_enemies)
+func _on_enemy_escaped():
+	print("⚠️ Enemy escaped!")
 
 func _on_game_over(reason: String):
+	current_state = GameState.GAME_OVER
 	print("💀 Game Over: %s" % reason)
+	print("Press SPACE to restart")
